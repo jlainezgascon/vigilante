@@ -40,9 +40,9 @@ HISTORY_LEN = 30       # lecturas guardadas por producto
 
 # Por cada categoría: más vendidos (2 páginas) y "Los que más suben"
 PAGES = {
-    nombre: [f"/gp/bestsellers/{slug}", f"/gp/bestsellers/{slug}?pg=2",
-             f"/gp/movers-and-shakers/{slug}"]
+    nombre: [f"/gp/bestsellers/{slug}", f"/gp/bestsellers/{slug}?pg=2"]
     for nombre, slug in CATEGORIAS.items()
+}
 }
 TOY_SLUGS = {"toys"}
 
