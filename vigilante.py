@@ -24,6 +24,9 @@ CATEGORIAS = {
     "Hogar y cocina": "kitchen",
     "Juguetes": "toys",
     "Belleza": "beauty",
+    "Perfumes": "beauty/6397798031",
+    "Informática": "computers",
+    "Deportes": "sports",
 }
 
 MIN_DROP_PCT = 70      # % de rebaja mínimo para avisar
