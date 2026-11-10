@@ -29,7 +29,7 @@ CATEGORIAS = {
     "Deportes": "sports",
 }
 
-MIN_DROP_PCT = 70      # % de rebaja mínimo para avisar
+MIN_DROP_PCT = 65      # % de rebaja mínimo para avisar
 MIN_REF_EUR = 20       # ignora productos que normalmente cuestan menos (€)
 TOY_MAX_AGE = 12       # juguetes: edad máxima; None = sin filtro de edad
 # ==========================================================================
@@ -110,6 +110,7 @@ TITLE_RES = [
     re.compile(r'<img[^>]+alt="([^"]{8,})"'),
     re.compile(r'class="[^"]*line-clamp[^"]*"[^>]*>\s*([^<]{8,})<'),
 ]
+PAGE_TITLE_RE = re.compile(r"<title[^>]*>([^<]*)", re.I)
 
 
 def parse_price(txt):
@@ -143,6 +144,15 @@ def parse_items(html):
                 break
         items[asin] = (title or asin, parse_price(price_m.group(1)))
     return items
+
+
+def diagnose_empty(path, html):
+    """Deja en el registro pistas de por qué una página no dio productos."""
+    tm = PAGE_TITLE_RE.search(html)
+    page_title = unescape(tm.group(1))[:90] if tm else "(sin título)"
+    log(f"  ↳ VACÍA {path}: {len(html)} bytes, título='{page_title}', "
+        f"asins={len(set(ASIN_RE.findall(html)))}, "
+        f"precios={len(PRICE_RE.findall(html))}")
 
 
 AGE_PLUS_RE = re.compile(r"(\d{1,2})\s*(?:\+|años?\s*\+|\+\s*años?|años? o más|años? y más)", re.I)
@@ -218,7 +228,7 @@ def format_alert(a):
 
 def main():
     state = load_state()
-    pages_ok = pages_blocked = 0
+    pages_ok = pages_blocked = pages_empty = 0
     alerts = []
     seen = 0
 
@@ -238,9 +248,14 @@ def main():
             pages_blocked += 1
             continue
         items = parse_items(html)
+        log(f"{path}: {len(items)} productos")
+        if not items:
+            diagnose_empty(path, html)
+            pages_empty += 1
+            time.sleep(random.uniform(4, 8))
+            continue
         pages_ok += 1
         seen += len(items)
-        log(f"{path}: {len(items)} productos")
         for asin, (title, price) in items.items():
             a = check_product(state, asin, title, price, category)
             if a:
@@ -269,8 +284,8 @@ def main():
         state["bienvenida_ok"] = ok
 
     save_state(state)
-    log(f"Fin: {pages_ok} páginas leídas, {pages_blocked} fallidas, "
-        f"{seen} productos, {len(alerts)} avisos, "
+    log(f"Fin: {pages_ok} páginas con productos, {pages_empty} vacías, "
+        f"{pages_blocked} fallidas, {seen} productos, {len(alerts)} avisos, "
         f"{len(state['products'])} en historial.")
 
 
