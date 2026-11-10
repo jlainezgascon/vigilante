@@ -2,7 +2,6 @@
 """
 Vigilante de errores de precio en Amazon.es -> tu Telegram privado
 Se ejecuta cada ~10 minutos en GitHub Actions (gratis).
-Dos fuentes: listas de más vendidos de Amazon + avisos de la comunidad (Chollometro).
 """
 
 import gzip
@@ -33,7 +32,6 @@ CATEGORIAS = {
 MIN_DROP_PCT = 65      # % de rebaja mínimo para avisar
 MIN_REF_EUR = 20       # ignora productos que normalmente cuestan menos (€)
 TOY_MAX_AGE = 12       # juguetes: edad máxima; None = sin filtro de edad
-AVISOS_COMUNIDAD = True  # avisos de errores de precio y chollos de Amazon (Chollometro)
 # ==========================================================================
 
 BASE = "https://www.amazon.es"
@@ -46,12 +44,6 @@ PAGES = {
     for nombre, slug in CATEGORIAS.items()
 }
 TOY_SLUGS = {"toys"}
-
-FEED_NUEVOS = "https://www.chollometro.com/rss/nuevos"
-FEED_HOT = "https://www.chollometro.com/rss/hot"
-ERROR_RE = re.compile(
-    r"errores? (?:de|en)(?: el)? precio|fallo (?:de|en el) precio|"
-    r"precio err[óo]neo|bug (?:de|en el) precio|mal precio|precio roto", re.I)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -76,7 +68,7 @@ def fetch(path):
     req = urllib.request.Request(url, headers={
         "User-Agent": random.choice(USER_AGENTS),
         "Accept-Language": "es-ES,es;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml",
+        "Accept": "text/html,application/xhtml+xml",
         "Accept-Encoding": "gzip",
     })
     with urllib.request.urlopen(req, timeout=30) as r:
@@ -108,10 +100,6 @@ def send_telegram(text):
     except urllib.error.URLError as e:
         log(f"Error enviando a Telegram: {e}")
         return False
-
-
-def esc(s):
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 PRICE_RE = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})(?:\s|&nbsp;)*€")
@@ -227,81 +215,14 @@ def check_product(state, asin, title, price, category):
 
 
 def format_alert(a):
-    title = esc(a["title"][:180])
+    title = (a["title"][:180].replace("&", "&amp;")
+             .replace("<", "&lt;").replace(">", "&gt;"))
     return (f"🚨 <b>Posible error de precio (-{a['drop']}%)</b>\n"
             f"{title}\n\n"
             f"💶 Ahora: <b>{a['price']:.2f} €</b>\n"
             f"📊 Habitual: {a['ref']:.2f} €\n"
             f"🗂️ {a['cat']}\n\n"
             f"👉 {BASE}/dp/{a['asin']}")
-
-
-# ------------------------------------------------------------ Comunidad
-def parse_feed(xml):
-    """Devuelve [{'id','title','link','merchant','price','text'}] de un RSS."""
-    out = []
-    for chunk in re.split(r"<item[ >]", xml)[1:]:
-        t = re.search(r"<title><!\[CDATA\[(.*?)\]\]></title>", chunk, re.S)
-        l = re.search(r"<link>(.*?)</link>", chunk, re.S)
-        g = re.search(r"<guid[^>]*>(.*?)</guid>", chunk, re.S)
-        d = re.search(r"<description><!\[CDATA\[(.*?)\]\]></description>", chunk, re.S)
-        m = re.search(r'<pepper:merchant name="([^"]*)" price="([^"]*)"', chunk)
-        if not t or not (l or g):
-            continue
-        link = (l or g).group(1).strip()
-        desc = re.sub(r"<[^>]+>", " ", d.group(1)) if d else ""
-        out.append({
-            "id": (g or l).group(1).strip(),
-            "title": unescape(t.group(1)),
-            "link": link,
-            "merchant": unescape(m.group(1)) if m else "",
-            "price": unescape(m.group(2)) if m else "",
-            "text": unescape(t.group(1)) + " " + desc,
-        })
-    return out
-
-
-def check_comunidad(state):
-    """Avisos de Chollometro: errores de precio y chollos populares de Amazon.
-    Nunca lanza excepciones: si falla, el vigilante de Amazon sigue igual."""
-    alerts = []
-    try:
-        nuevos = parse_feed(fetch(FEED_NUEVOS))
-        time.sleep(random.uniform(2, 4))
-        hot = parse_feed(fetch(FEED_HOT))
-    except Exception as e:
-        log(f"Comunidad: no se pudo leer el feed: {e}")
-        return alerts
-    log(f"Comunidad: {len(nuevos)} ofertas nuevas, {len(hot)} populares")
-
-    hot_ids = {x["id"] for x in hot}
-    primera_vez = not state.get("comunidad_init")
-    now = time.time()
-    for it in nuevos + [h for h in hot if h["id"] not in {n["id"] for n in nuevos}]:
-        key = "c:" + it["id"]
-        if key in state["alerted"]:
-            continue
-        es_error = bool(ERROR_RE.search(it["text"]))
-        es_amazon_hot = (it["merchant"].lower().startswith("amazon")
-                         and it["id"] in hot_ids)
-        if not (es_error or es_amazon_hot):
-            continue
-        state["alerted"][key] = now
-        if primera_vez:
-            continue  # la primera vez solo se anota lo existente, sin avisar
-        alerts.append((it, es_error))
-    state["comunidad_init"] = True
-    return alerts
-
-
-def format_comunidad(it, es_error):
-    cabecera = ("🚨 <b>Posible error de precio (aviso de la comunidad)</b>"
-                if es_error else "🔥 <b>Chollo popular en Amazon</b>")
-    tienda = f"{esc(it['price'])} · {esc(it['merchant'])}".strip(" ·")
-    return (f"{cabecera}\n{esc(it['title'][:180])}\n\n"
-            f"💶 {tienda}\n"
-            f"👉 {it['link']}\n"
-            f"ℹ️ Visto en Chollometro: compruébalo antes de comprar.")
 
 
 def main():
@@ -344,11 +265,6 @@ def main():
         send_telegram(format_alert(a))
         log(f"AVISO {a['asin']} -{a['drop']}% {a['price']:.2f} €")
 
-    comunidad = check_comunidad(state) if AVISOS_COMUNIDAD else []
-    for it, es_error in comunidad:
-        send_telegram(format_comunidad(it, es_error))
-        log(f"AVISO COMUNIDAD {'error' if es_error else 'hot'}: {it['title'][:60]}")
-
     if pages_ok == 0:
         state["blocked_runs"] = state.get("blocked_runs", 0) + 1
         if state["blocked_runs"] == 6:
@@ -369,7 +285,6 @@ def main():
     save_state(state)
     log(f"Fin: {pages_ok} páginas con productos, {pages_empty} vacías, "
         f"{pages_blocked} fallidas, {seen} productos, {len(alerts)} avisos, "
-        f"{len(comunidad)} avisos de comunidad, "
         f"{len(state['products'])} en historial.")
 
 
