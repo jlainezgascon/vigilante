@@ -1,0 +1,37 @@
+name: Vigilante Amazon
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: vigilante
+  cancel-in-progress: false
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recuperar historial de precios
+        uses: actions/cache/restore@v4
+        with:
+          path: estado
+          key: historial-${{ github.run_id }}
+          restore-keys: historial-
+
+      - name: Vigilar precios
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python3 vigilante.py
+
+      - name: Guardar historial de precios
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: estado
+          key: historial-${{ github.run_id }}
